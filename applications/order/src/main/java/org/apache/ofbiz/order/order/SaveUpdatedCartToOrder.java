@@ -49,30 +49,11 @@ public class SaveUpdatedCartToOrder {
 
 	public void execute() throws GeneralException {
 		// get/set the shipping estimates. If it's a SALES ORDER, then return an error if there are no ship estimates
-		int shipGroupsSize = cart.getShipGroupSize();
-		int realShipGroupsSize = (new OrderReadHelper(delegator, orderId)).getOrderItemShipGroups().size();
-		// If an empty csi has initially been added to cart.shipInfo by ShoppingCart.setItemShipGroupQty() (called indirectly by ShoppingCart.setUserLogin() and then ProductPromoWorker.doPromotions(), etc.)
-		//  shipGroupsSize > realShipGroupsSize are different (+1 for shipGroupsSize), then simply bypass the 1st empty csi!
-		int origin = realShipGroupsSize == shipGroupsSize ? 0 : 1;
-		for (int gi = origin; gi < shipGroupsSize; gi++) {
-			String shipmentMethodTypeId = cart.getShipmentMethodTypeId(gi);
-			String carrierPartyId = cart.getCarrierPartyId(gi);
-			Debug.logInfo("Getting ship estimate for group #" + gi + " [" + shipmentMethodTypeId + " / " + carrierPartyId + "]", module);
-			Map<String, Object> result = ShippingEvents.getShipGroupEstimate(dispatcher, delegator, cart, gi);
-			if (("SALES_ORDER".equals(cart.getOrderType())) && (ServiceUtil.isError(result))) {
-				Debug.logError(ServiceUtil.getErrorMessage(result), module);
-				throw new GeneralException(ServiceUtil.getErrorMessage(result));
-			}
-
-			BigDecimal shippingTotal = (BigDecimal) result.get("shippingTotal");
-			if (shippingTotal == null) {
-				shippingTotal = BigDecimal.ZERO;
-			}
-			cart.setItemShipGroupEstimate(shippingTotal, gi);
-		}
+		setShippingEstimates();
 
 		// calc the sales tax
 		CheckOutHelper coh = new CheckOutHelper(dispatcher, delegator, cart);
+
 		if (calcTax) {
 			try {
 				coh.calcAndAddTax();
@@ -97,18 +78,7 @@ public class SaveUpdatedCartToOrder {
 			throw new GeneralException(ServiceUtil.getErrorMessage(validateResp));
 		}
 
-		// handle OrderHeader fields
-		String billingAccountId = cart.getBillingAccountId();
-		if (UtilValidate.isNotEmpty(billingAccountId)) {
-			try {
-				GenericValue orderHeader = EntityQuery.use(delegator).from("OrderHeader").where("orderId", orderId).queryOne();
-				orderHeader.set("billingAccountId", billingAccountId);
-				toStore.add(orderHeader);
-			} catch (GenericEntityException e) {
-				Debug.logError(e, module);
-				throw new GeneralException(e.getMessage());
-			}
-		}
+		handleOrderHeaderFields(toStore);
 
 		toStore.addAll(cart.makeOrderItems(dispatcher));
 		toStore.addAll(cart.makeAllAdjustments());
@@ -400,6 +370,44 @@ public class SaveUpdatedCartToOrder {
 
 		if (resErrorMessages.size() > 0) {
 			throw new GeneralException(ServiceUtil.getErrorMessage(ServiceUtil.returnError(resErrorMessages)));
+		}
+	}
+
+	private void handleOrderHeaderFields(List<GenericValue> toStore) throws GeneralException {
+		String billingAccountId = cart.getBillingAccountId();
+		if (UtilValidate.isNotEmpty(billingAccountId)) {
+			try {
+				GenericValue orderHeader = EntityQuery.use(delegator).from("OrderHeader").where("orderId", orderId).queryOne();
+				orderHeader.set("billingAccountId", billingAccountId);
+				toStore.add(orderHeader);
+			} catch (GenericEntityException e) {
+				Debug.logError(e, module);
+				throw new GeneralException(e.getMessage());
+			}
+		}
+	}
+
+	private void setShippingEstimates() throws GeneralException {
+		int shipGroupsSize = cart.getShipGroupSize();
+		int realShipGroupsSize = (new OrderReadHelper(delegator, orderId)).getOrderItemShipGroups().size();
+		// If an empty csi has initially been added to cart.shipInfo by ShoppingCart.setItemShipGroupQty() (called indirectly by ShoppingCart.setUserLogin() and then ProductPromoWorker.doPromotions(), etc.)
+		//  shipGroupsSize > realShipGroupsSize are different (+1 for shipGroupsSize), then simply bypass the 1st empty csi!
+		int origin = realShipGroupsSize == shipGroupsSize ? 0 : 1;
+		for (int gi = origin; gi < shipGroupsSize; gi++) {
+			String shipmentMethodTypeId = cart.getShipmentMethodTypeId(gi);
+			String carrierPartyId = cart.getCarrierPartyId(gi);
+			Debug.logInfo("Getting ship estimate for group #" + gi + " [" + shipmentMethodTypeId + " / " + carrierPartyId + "]", module);
+			Map<String, Object> result = ShippingEvents.getShipGroupEstimate(dispatcher, delegator, cart, gi);
+			if (("SALES_ORDER".equals(cart.getOrderType())) && (ServiceUtil.isError(result))) {
+				Debug.logError(ServiceUtil.getErrorMessage(result), module);
+				throw new GeneralException(ServiceUtil.getErrorMessage(result));
+			}
+
+			BigDecimal shippingTotal = (BigDecimal) result.get("shippingTotal");
+			if (shippingTotal == null) {
+				shippingTotal = BigDecimal.ZERO;
+			}
+			cart.setItemShipGroupEstimate(shippingTotal, gi);
 		}
 	}
 }
